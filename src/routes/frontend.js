@@ -2,29 +2,10 @@ import { Router } from 'express';
 import { authJwt } from '../middleware/authJwt.js';
 import { getRepos, createIssue, createComment } from '../clients/gitClient.js';
 import { storeIssue } from '../services/issueService.js';
+import { isValidRepo, isValidNumber, isValidBody, MAX_BODY_LENGTH } from '../utils/validation.js';
 
 const router = Router();
 router.use(authJwt);
-
-// Repo names must be safe slug-like identifiers — no path traversal characters.
-// Allows alphanumeric, hyphens, underscores, and dots (e.g. "my-repo", "org.repo").
-const REPO_RE = /^[a-zA-Z0-9_.-]{1,100}$/;
-// Issue numbers must be positive integers.
-const NUMBER_RE = /^\d{1,9}$/;
-// Maximum comment / issue body length (64 KiB is generous but bounded).
-const MAX_BODY_LENGTH = 65_536;
-
-function isValidRepo(repo) {
-  return typeof repo === 'string' && REPO_RE.test(repo);
-}
-
-function isValidNumber(number) {
-  return typeof number === 'string' && NUMBER_RE.test(number);
-}
-
-function isValidBody(body) {
-  return typeof body === 'string' && body.length > 0 && body.length <= MAX_BODY_LENGTH;
-}
 
 router.get('/repos', async (req, res) => {
   try {
