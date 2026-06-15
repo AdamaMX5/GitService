@@ -36,10 +36,17 @@ async function resolveIssueRepo(issueNumber) {
   return null;
 }
 
+// Maximum email body length accepted from the EmailService webhook (256 KiB is generous
+// for email replies but still prevents unbounded memory usage).
+const MAX_BODY_LENGTH = 262_144;
+
 router.post('/webhook/email-reply', async (req, res) => {
   const { from, subject, body } = req.body;
   if (!subject || !body) {
     return res.status(400).json({ error: 'subject and body are required' });
+  }
+  if (typeof body !== 'string' || body.length > MAX_BODY_LENGTH) {
+    return res.status(400).json({ error: `body must not exceed ${MAX_BODY_LENGTH} characters` });
   }
 
   const issueNumber = parseIssueNumberFromSubject(subject);

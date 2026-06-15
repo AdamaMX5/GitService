@@ -18,8 +18,9 @@ function loadTokens() {
 }
 
 function saveTokens(tokens) {
-  if (!existsSync(TOKENS_DIR)) mkdirSync(TOKENS_DIR, { recursive: true });
-  writeFileSync(TOKENS_PATH, JSON.stringify(tokens, null, 2), 'utf8');
+  if (!existsSync(TOKENS_DIR)) mkdirSync(TOKENS_DIR, { recursive: true, mode: 0o700 });
+  // mode 0o600 = owner read/write only — prevents other OS users from reading tokens
+  writeFileSync(TOKENS_PATH, JSON.stringify(tokens, null, 2), { encoding: 'utf8', mode: 0o600 });
 }
 
 function isExpired(token) {

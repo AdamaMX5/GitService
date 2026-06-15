@@ -7,7 +7,8 @@ import cliRouter from './routes/cli.js';
 import webhookRouter from './routes/webhook.js';
 
 const app = express();
-app.use(express.json());
+// Limit JSON body to 512 KiB to prevent DoS via oversized payloads.
+app.use(express.json({ limit: '512kb' }));
 
 app.use('/', publicRouter);
 app.use('/', frontendRouter);

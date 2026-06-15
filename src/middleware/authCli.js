@@ -1,3 +1,4 @@
+import { timingSafeCompare } from '../utils/timingSafeCompare.js';
 import { jwtVerify } from 'jose';
 import { getPublicKey } from './authJwt.js';
 import { config } from '../config.js';
@@ -6,7 +7,7 @@ import { config } from '../config.js';
 // API key is used by standalone gts installations; GITCLIENT JWT is used by the GitClient daemon.
 export function authCli(req, res, next) {
   const apiKey = req.headers['x-api-key'];
-  if (apiKey && apiKey === config.apiKey) return next();
+  if (apiKey && timingSafeCompare(apiKey, config.apiKey)) return next();
 
   const authHeader = req.headers.authorization;
   if (authHeader?.startsWith('Bearer ')) {
