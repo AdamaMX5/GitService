@@ -8,20 +8,20 @@ import { execSync } from 'child_process';
 const RC_PATH = join(homedir(), '.gtsrc');
 const TOKENS_PATH = join(homedir(), '.gitclient', 'tokens.json');
 
-function loadConfig() {
+async function loadConfig() {
   if (existsSync(RC_PATH)) {
     const rc = JSON.parse(readFileSync(RC_PATH, 'utf8'));
     if (rc.baseUrl && rc.apiKey) {
       return { baseUrl: rc.baseUrl, headers: { 'X-API-Key': rc.apiKey } };
     }
   }
-  // Fall back to GitClient JWT tokens
-  if (existsSync(TOKENS_PATH)) {
-    const tokens = JSON.parse(readFileSync(TOKENS_PATH, 'utf8'));
-    const envUrl = process.env.GIT_SERVICE_URL;
-    if (tokens.access_token && envUrl) {
-      return { baseUrl: envUrl, headers: { Authorization: `Bearer ${tokens.access_token}` } };
-    }
+  // Fall back to GitClient JWT tokens (when gts runs inside the GitClient environment)
+  const envUrl = process.env.GIT_SERVICE_URL;
+  if (existsSync(TOKENS_PATH) && envUrl) {
+    // Import getAccessToken lazily to avoid loading dotenv/auth deps in standalone mode
+    const { getAccessToken } = await import('./auth.js');
+    const accessToken = await getAccessToken();
+    return { baseUrl: envUrl, headers: { Authorization: `Bearer ${accessToken}` } };
   }
   throw new Error(
     `gts is not configured.\n` +
@@ -84,7 +84,7 @@ async function main() {
     process.exit(1);
   }
 
-  const { baseUrl, headers } = loadConfig();
+  const { baseUrl, headers } = await loadConfig();
   const number = numberStr;
   const repo = flags.repo || detectRepo();
 

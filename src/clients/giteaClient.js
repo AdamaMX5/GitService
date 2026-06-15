@@ -11,18 +11,23 @@ const http = axios.create({
 
 const owner = config.gitea.owner;
 
-// Cache label name → id mappings per repo to avoid repeated API calls
-const labelCache = new Map();
+// Cache label name → id mappings per repo to avoid repeated API calls.
+// Entries expire after LABEL_CACHE_TTL_MS to pick up label changes in Gitea.
+const LABEL_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+const labelCache = new Map(); // repo → { map: { name: id }, expiresAt: number }
 
 async function resolveLabelIds(repo, labelNames) {
   if (!labelNames?.length) return [];
-  if (!labelCache.has(repo)) {
+
+  const cached = labelCache.get(repo);
+  if (!cached || Date.now() > cached.expiresAt) {
     const res = await http.get(`/repos/${owner}/${repo}/labels`);
     const map = {};
     for (const l of res.data) map[l.name] = l.id;
-    labelCache.set(repo, map);
+    labelCache.set(repo, { map, expiresAt: Date.now() + LABEL_CACHE_TTL_MS });
   }
-  const map = labelCache.get(repo);
+
+  const { map } = labelCache.get(repo);
   return labelNames.map(name => map[name]).filter(id => id !== undefined);
 }
 

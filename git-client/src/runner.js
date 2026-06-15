@@ -9,7 +9,13 @@ export function startClaude(issue) {
   }
 
   const prompt = [
-    `Bearbeite diesen Issue: ${issue.url}`,
+    `Bearbeite diesen Issue mit dem Agent Team aus der CLAUDE.md: ${issue.url}`,
+    ``,
+    `Team-Struktur:`,
+    `- Software-Experte: implementiert den Fix/das Feature`,
+    `- Test-Experte: liest den Issue, leitet Akzeptanzkriterien ab, schreibt Tests (Backend: VERIFIED, Frontend: PLAUSIBLE)`,
+    `- Sicherheits-Experte: auditiert alle neuen Endpunkte und Auth-Flows`,
+    `- Code-Review-Experte: gibt finale Freigabe erst nach OK von Test- und Security-Agent, dann Push nach main`,
     ``,
     `Issue #${issue.number}: ${issue.title}`,
     ``,

@@ -1,10 +1,40 @@
 import { Router } from 'express';
 import { authApiKey } from '../middleware/authApiKey.js';
-import { createComment } from '../clients/gitClient.js';
-import { parseIssueNumberFromSubject, findIssueByNumber } from '../services/issueService.js';
+import { getRepos, createComment, listOpenIssues } from '../clients/gitClient.js';
+import { parseIssueNumberFromSubject, findIssueByNumber, storeIssue } from '../services/issueService.js';
 
 const router = Router();
 router.use(authApiKey);
+
+/**
+ * Resolves which repo owns the given issue number.
+ * First checks the in-memory store (fast path).
+ * Falls back to querying all repos via the git provider (handles server restart scenario).
+ */
+async function resolveIssueRepo(issueNumber) {
+  const stored = findIssueByNumber(issueNumber);
+  if (stored) return stored;
+
+  // Fallback: query all repos for the open issue
+  try {
+    const repos = await getRepos();
+    const allIssues = await Promise.all(repos.map(r => listOpenIssues(r.name)));
+    for (const issues of allIssues) {
+      const match = issues.find(i => i.number === issueNumber);
+      if (match) {
+        // Repopulate the in-memory store so subsequent calls are fast
+        storeIssue(match.repo, match.number, {
+          creatorEmail: null, // creator email unknown after restart — email-based questions won't work
+          title: match.title,
+        });
+        return findIssueByNumber(issueNumber);
+      }
+    }
+  } catch (err) {
+    console.error(`Webhook fallback repo-lookup failed for issue #${issueNumber}:`, err.message);
+  }
+  return null;
+}
 
 router.post('/webhook/email-reply', async (req, res) => {
   const { from, subject, body } = req.body;
@@ -17,7 +47,14 @@ router.post('/webhook/email-reply', async (req, res) => {
     return res.status(422).json({ error: 'Could not parse issue number from subject' });
   }
 
-  const stored = findIssueByNumber(issueNumber);
+  let stored;
+  try {
+    stored = await resolveIssueRepo(issueNumber);
+  } catch (err) {
+    console.error(`Webhook repo resolution error for issue #${issueNumber}:`, err.message);
+    return res.status(503).json({ error: 'Git provider unavailable' });
+  }
+
   if (!stored) {
     return res.status(404).json({ error: `No active issue found for #${issueNumber}` });
   }
