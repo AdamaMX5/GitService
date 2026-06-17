@@ -19,8 +19,12 @@ export async function getRepos() {
   const reposPath = ownerType === 'org'
     ? `/orgs/${owner}/repos`
     : `/users/${owner}/repos`;
+  const fullUrl = `https://api.github.com${reposPath}`;
+  console.log(`[GitHub] Loading repos — owner: ${owner}, type: ${ownerType}, url: ${fullUrl}`);
   const res = await http.get(reposPath, { params: { per_page: 100, type: 'all' } });
-  return res.data.map(r => ({ name: r.name, fullName: r.full_name, url: r.html_url }));
+  const repos = res.data.map(r => ({ name: r.name, fullName: r.full_name, url: r.html_url }));
+  console.log(`[GitHub] Loaded ${repos.length} repos: ${repos.map(r => r.name).join(', ')}`);
+  return repos;
 }
 
 export async function getIssue(repo, number) {
