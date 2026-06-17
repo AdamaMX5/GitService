@@ -1,20 +1,15 @@
 import { Router } from 'express';
 import { authJwt } from '../middleware/authJwt.js';
-import { getRepos, createIssue, createComment } from '../clients/gitClient.js';
+import { getRepos } from '../services/repoCache.js';
+import { createIssue, createComment } from '../clients/gitClient.js';
 import { storeIssue } from '../services/issueService.js';
 import { isValidRepo, isValidNumber, isValidBody, MAX_BODY_LENGTH } from '../utils/validation.js';
 
 const router = Router();
 router.use(authJwt);
 
-router.get('/repos', async (req, res) => {
-  try {
-    const repos = await getRepos();
-    res.json(repos);
-  } catch (err) {
-    console.error('GET /repos error:', err.message);
-    res.status(503).json({ error: 'Git provider unavailable' });
-  }
+router.get('/repos', (req, res) => {
+  res.json(getRepos());
 });
 
 router.post('/issue', async (req, res) => {
