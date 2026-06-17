@@ -12,11 +12,15 @@ export const config = {
   github: {
     token: process.env.GITHUB_TOKEN || '',
     owner: process.env.GITHUB_OWNER || '',
+    // 'user' → /users/:owner/repos, 'org' → /orgs/:owner/repos
+    ownerType: (process.env.GITHUB_OWNER_TYPE || 'user') === 'org' ? 'org' : 'user',
   },
   gitea: {
     baseUrl: process.env.GITEA_BASE_URL || '',
     token: process.env.GITEA_TOKEN || '',
     owner: process.env.GITEA_OWNER || '',
+    // 'user' → /users/:owner/repos, 'org' → /orgs/:owner/repos
+    ownerType: (process.env.GITEA_OWNER_TYPE || 'user') === 'org' ? 'org' : 'user',
   },
   apiKey: required('API_KEY'),
   authServiceUrl: process.env.AUTH_SERVICE_URL || 'https://auth.freischule.info',

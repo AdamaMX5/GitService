@@ -11,9 +11,15 @@ const http = axios.create({
 });
 
 const owner = config.github.owner;
+const ownerType = config.github.ownerType;
 
 export async function getRepos() {
-  const res = await http.get(`/orgs/${owner}/repos`, { params: { per_page: 100, type: 'all' } });
+  // GitHub exposes different listing endpoints depending on whether the owner is
+  // a personal user account or an organisation.
+  const reposPath = ownerType === 'org'
+    ? `/orgs/${owner}/repos`
+    : `/users/${owner}/repos`;
+  const res = await http.get(reposPath, { params: { per_page: 100, type: 'all' } });
   return res.data.map(r => ({ name: r.name, fullName: r.full_name, url: r.html_url }));
 }
 

@@ -10,6 +10,7 @@ const http = axios.create({
 });
 
 const owner = config.gitea.owner;
+const ownerType = config.gitea.ownerType;
 
 // Cache label name → id mappings per repo to avoid repeated API calls.
 // Entries expire after LABEL_CACHE_TTL_MS to pick up label changes in Gitea.
@@ -32,7 +33,12 @@ async function resolveLabelIds(repo, labelNames) {
 }
 
 export async function getRepos() {
-  const res = await http.get(`/orgs/${owner}/repos`, { params: { limit: 50 } });
+  // Gitea exposes different listing endpoints depending on whether the owner is
+  // a personal user account or an organisation.
+  const reposPath = ownerType === 'org'
+    ? `/orgs/${owner}/repos`
+    : `/users/${owner}/repos`;
+  const res = await http.get(reposPath, { params: { limit: 50 } });
   return res.data.map(r => ({ name: r.name, fullName: r.full_name, url: r.html_url }));
 }
 
