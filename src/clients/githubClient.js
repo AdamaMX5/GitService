@@ -21,7 +21,17 @@ export async function getRepos() {
     : `/users/${owner}/repos`;
   const fullUrl = `https://api.github.com${reposPath}`;
   console.log(`[GitHub] Loading repos — owner: ${owner}, type: ${ownerType}, url: ${fullUrl}`);
-  const res = await http.get(reposPath, { params: { per_page: 100, type: 'all' } });
+  let res;
+  try {
+    res = await http.get(reposPath, { params: { per_page: 100, type: 'all' } });
+  } catch (err) {
+    if (err.response) {
+      console.error(`[GitHub] Request failed — url: ${fullUrl}, status: ${err.response.status}, message: ${err.response.data?.message ?? err.message}`);
+    } else {
+      console.error(`[GitHub] Connection error — url: ${fullUrl}, code: ${err.code ?? 'unknown'}, message: ${err.message}`);
+    }
+    throw err;
+  }
   const repos = res.data.map(r => ({ name: r.name, fullName: r.full_name, url: r.html_url }));
   console.log(`[GitHub] Loaded ${repos.length} repos: ${repos.map(r => r.name).join(', ')}`);
   return repos;

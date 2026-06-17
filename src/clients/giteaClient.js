@@ -40,7 +40,17 @@ export async function getRepos() {
     : `/users/${owner}/repos`;
   const fullUrl = `${config.gitea.baseUrl}/api/v1${reposPath}`;
   console.log(`[Gitea] Loading repos — owner: ${owner}, type: ${ownerType}, url: ${fullUrl}`);
-  const res = await http.get(reposPath, { params: { limit: 50 } });
+  let res;
+  try {
+    res = await http.get(reposPath, { params: { limit: 50 } });
+  } catch (err) {
+    if (err.response) {
+      console.error(`[Gitea] Request failed — url: ${fullUrl}, status: ${err.response.status}, message: ${err.response.data?.message ?? err.message}`);
+    } else {
+      console.error(`[Gitea] Connection error — url: ${fullUrl}, code: ${err.code ?? 'unknown'}, message: ${err.message}`);
+    }
+    throw err;
+  }
   const repos = res.data.map(r => ({ name: r.name, fullName: r.full_name, url: r.html_url }));
   console.log(`[Gitea] Loaded ${repos.length} repos: ${repos.map(r => r.name).join(', ')}`);
   return repos;
