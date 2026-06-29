@@ -19,3 +19,8 @@ export function isValidNumber(number) {
 export function isValidBody(body) {
   return typeof body === 'string' && body.length > 0 && body.length <= MAX_BODY_LENGTH;
 }
+
+// API key labels must be non-empty strings of at most 100 characters.
+export function isValidName(name) {
+  return typeof name === 'string' && name.length >= 1 && name.length <= 100;
+}

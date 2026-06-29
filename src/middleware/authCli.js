@@ -1,13 +1,12 @@
-import { timingSafeCompare } from '../utils/timingSafeCompare.js';
 import { jwtVerify } from 'jose';
 import { getPublicKey } from './authJwt.js';
-import { config } from '../config.js';
+import { verifyApiKey } from '../services/apiKeyService.js';
 
 // CLI endpoints accept either a valid API key or a JWT with the GITCLIENT role.
 // API key is used by standalone gts installations; GITCLIENT JWT is used by the GitClient daemon.
-export function authCli(req, res, next) {
+export async function authCli(req, res, next) {
   const apiKey = req.headers['x-api-key'];
-  if (apiKey && timingSafeCompare(apiKey, config.apiKey)) return next();
+  if (apiKey && await verifyApiKey(apiKey)) return next();
 
   const authHeader = req.headers.authorization;
   if (authHeader?.startsWith('Bearer ')) {

@@ -20,8 +20,8 @@ Der GitService ist der zentrale Abstraktionslayer für alle Git-Operationen in d
 - **Runtime:** Node.js
 - **Framework:** Express.js
 - **Sprache:** JavaScript (ESM)
-- **Auth:** JWT (Frontend-Endpoints) + API-Key (CLI- und Webhook-Endpoints)
-- **Abhängigkeiten:** `axios` für HTTP-Clients, `dotenv` für Konfiguration
+- **Auth:** JWT (Frontend- und Admin-Endpoints) + DB-gestützter API-Key (CLI- und Webhook-Endpoints)
+- **Abhängigkeiten:** `axios` für HTTP-Clients, `dotenv` für Konfiguration, `mongodb` für den API-Key-Speicher
 
 ---
 
@@ -43,8 +43,11 @@ GITEA_TOKEN=...
 GITEA_OWNER=freischule
 
 # Interne Auth
-API_KEY=...
 JWT_PUBLIC_KEY_PATH=./keys/public.pem
+
+# MongoDB (API-Key-Speicher, läuft auf dem Strato-Server)
+MONGODB_URI=mongodb://user:password@host:27017/gitservice?authSource=admin
+MONGODB_DB=gitservice
 
 # EmailService
 EMAIL_SERVICE_URL=https://email.freischule.info
@@ -62,8 +65,11 @@ EMAIL_REPLY_TO=gitservice@flussmark.de
 ├── src/
 │   ├── index.js                  # Express-App, Routen registrieren
 │   ├── config.js                 # Umgebungsvariablen laden und validieren
+│   ├── db/
+│   │   └── mongo.js              # MongoDB-Verbindung (nativer mongodb-Treiber)
 │   ├── middleware/
 │   │   ├── authJwt.js            # JWT-Validierung für Frontend-Endpoints
+│   │   ├── authAdmin.js         # JWT-Validierung mit ADMIN-Rolle für Admin-Endpoints
 │   │   └── authApiKey.js         # API-Key-Validierung für CLI- und Webhook-Endpoints
 │   ├── clients/
 │   │   ├── gitClient.js          # Factory: gibt GitHubClient oder GiteaClient zurück
@@ -74,9 +80,11 @@ EMAIL_REPLY_TO=gitservice@flussmark.de
 │   │   ├── public.js             # GET / und GET /health
 │   │   ├── frontend.js           # Frontend-Endpoints (JWT)
 │   │   ├── cli.js                # gts CLI-Endpoints (API-Key)
-│   │   └── webhook.js            # Webhook-Endpoints (API-Key)
+│   │   ├── webhook.js            # Webhook-Endpoints (API-Key)
+│   │   └── admin.js             # Admin-Endpoints: API-Key-Verwaltung (ADMIN-JWT)
 │   └── services/
-│       └── issueService.js       # Business-Logik: Email versenden, Subject parsen etc.
+│       ├── issueService.js       # Business-Logik: Email versenden, Subject parsen etc.
+│       └── apiKeyService.js      # API-Key-Erzeugung, -Verifikation und -Widerruf
 ├── .env
 ├── .env.example
 ├── package.json
@@ -283,6 +291,73 @@ Wird vom EmailService aufgerufen, wenn eine Antwort-Email auf `gitservice@flussm
 
 ---
 
+### Admin API (JWT mit Rolle `ADMIN`)
+
+Verwaltung der DB-gestützten API-Keys. Alle Endpoints erfordern ein gültiges JWT, dessen `roles` die Rolle `ADMIN` enthalten. `401` ohne/ungültiges Token, `403` ohne ADMIN-Rolle, `503` wenn der JWT-Public-Key noch nicht geladen ist oder die DB nicht erreichbar ist.
+
+API-Keys folgen dem GitHub-PAT-Vorbild: der Klartext-Key wird **nur einmalig** bei der Erstellung zurückgegeben, danach nie wieder. In der MongoDB liegt ausschließlich der SHA-256-Hash. Format: `gts_` + 32 Byte base64url-Random. Widerruf erfolgt als Soft-Revoke über `revokedAt`.
+
+#### `POST /admin/api-keys`
+Erzeugt einen neuen, benannten API-Key.
+
+**Request Body:**
+```json
+{ "name": "gitclient-prod" }
+```
+
+| Feld   | Typ    | Pflicht | Beschreibung |
+|--------|--------|---------|--------------|
+| `name` | string | ✅      | Label (1–100 Zeichen) zur Identifikation |
+
+**Response `201`:**
+```json
+{
+  "id": "665f...",
+  "name": "gitclient-prod",
+  "key": "gts_xY3...base64url...",
+  "displayPrefix": "gts_xY3aB2",
+  "createdAt": "2026-06-29T12:00:00.000Z"
+}
+```
+
+> Der Klartext-`key` wird **nur hier einmalig** zurückgegeben und ist danach nicht mehr abrufbar. `400` bei ungültigem `name`.
+
+---
+
+#### `GET /admin/api-keys`
+Listet alle API-Keys mit Metadaten — **ohne** Hash oder Klartext.
+
+**Response `200`:**
+```json
+[
+  {
+    "id": "665f...",
+    "name": "gitclient-prod",
+    "displayPrefix": "gts_xY3aB2",
+    "createdAt": "2026-06-29T12:00:00.000Z",
+    "lastUsedAt": "2026-06-29T13:37:00.000Z",
+    "revokedAt": null
+  }
+]
+```
+
+---
+
+#### `DELETE /admin/api-keys/:id`
+Widerruft einen API-Key (Soft-Revoke).
+
+**Response `200`:**
+```json
+{ "id": "665f...", "revokedAt": "2026-06-29T14:00:00.000Z" }
+```
+
+**Response `404`** wenn der Key unbekannt oder bereits widerrufen ist:
+```json
+{ "error": "API key not found" }
+```
+
+---
+
 ## `gts` CLI
 
 Das `gts` CLI ist ein schlankes Node.js-Script das global installiert wird (`npm install -g`) und die CLI-API des GitService aufruft.
@@ -365,8 +440,9 @@ User antwortet auf Email
 |----------------|--------------|--------|
 | Public (`/`, `/health`) | — | — |
 | Frontend (`/repos`, `/issue`, `/issue/:number/comment`) | JWT mit beliebiger Rolle | `Authorization: Bearer <token>` |
-| CLI (`/cli/*`) | API-Key | `X-API-Key: <key>` |
-| Webhook (`/webhook/*`) | API-Key | `X-API-Key: <key>` |
+| Admin (`/admin/*`) | JWT mit Rolle `ADMIN` | `Authorization: Bearer <token>` |
+| CLI (`/cli/*`) | DB-gestützter API-Key oder GITCLIENT-JWT | `X-API-Key: <key>` oder `Authorization: Bearer <token>` |
+| Webhook (`/webhook/*`) | DB-gestützter API-Key | `X-API-Key: <key>` |
 
 ---
 

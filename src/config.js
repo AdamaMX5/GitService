@@ -22,7 +22,10 @@ export const config = {
     // 'user' → /users/:owner/repos, 'org' → /orgs/:owner/repos
     ownerType: (process.env.GITEA_OWNER_TYPE || 'user') === 'org' ? 'org' : 'user',
   },
-  apiKey: required('API_KEY'),
+  mongo: {
+    uri: required('MONGODB_URI'),
+    dbName: process.env.MONGODB_DB || 'gitservice',
+  },
   authServiceUrl: process.env.AUTH_SERVICE_URL || 'https://auth.freischule.info',
   email: {
     serviceUrl: process.env.EMAIL_SERVICE_URL || '',

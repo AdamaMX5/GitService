@@ -2,12 +2,13 @@
  * Unit tests for src/middleware/authCli.js
  *
  * authCli accepts EITHER:
- *  (A) a correct X-API-Key header, OR
+ *  (A) a valid X-API-Key header — now validated against the DB via the async
+ *      verifyApiKey() service (no more static config.apiKey compare), OR
  *  (B) a valid Bearer JWT containing the GITCLIENT role (RS256)
  *
- * We do NOT use real JWTs in tests. Instead we mirror the exact authCli logic
- * with injectable deps (jwtVerify, getPublicKey), which lets us test every
- * decision branch without touching the network or loading env vars.
+ * We do NOT use real JWTs or a real DB in tests. Instead we mirror the exact
+ * authCli logic with injectable deps (verifyApiKey, jwtVerify, getPublicKey),
+ * which lets us test every decision branch without touching the network or DB.
  *
  * A structural smoke-test of the real file confirms the real code matches.
  */
@@ -26,15 +27,18 @@ const SOURCE_PATH = join(__dirname, '..', 'src', 'middleware', 'authCli.js');
 // ---------------------------------------------------------------------------
 
 describe('authCli.js — structural smoke-test', () => {
-  it('real file exports authCli and covers both auth paths', () => {
+  it('real file exports async authCli and covers both auth paths', () => {
     const src = readFileSync(SOURCE_PATH, 'utf8');
-    assert.ok(src.includes('export function authCli'), 'must export authCli');
+    assert.ok(src.includes('export async function authCli'), 'must export async authCli');
     assert.ok(src.includes("'x-api-key'"), 'must check x-api-key header');
+    assert.ok(src.includes('verifyApiKey'), 'Path A must validate via verifyApiKey service');
+    assert.ok(src.includes('await verifyApiKey'), 'Path A must await the async DB lookup');
     assert.ok(src.includes('Bearer '), 'must check Bearer token');
     assert.ok(src.includes("'GITCLIENT'"), "must check for 'GITCLIENT' role");
     assert.ok(src.includes('403'), 'must return 403 when role is missing');
     assert.ok(src.includes('401'), 'must return 401 for invalid token or missing auth');
     assert.ok(src.includes('503'), 'must return 503 when public key is unavailable');
+    assert.ok(!src.includes('config.apiKey'), 'must not compare against a static config.apiKey');
   });
 });
 
@@ -42,11 +46,11 @@ describe('authCli.js — structural smoke-test', () => {
 // Mirrored implementation with injectable deps
 // ---------------------------------------------------------------------------
 
-function makeAuthCli({ apiKey, jwtVerify, getPublicKey }) {
-  return function authCli(req, res, next) {
-    // Path A: API key
-    const key = req.headers['x-api-key'];
-    if (key && key === apiKey) return next();
+function makeAuthCli({ verifyApiKey, jwtVerify, getPublicKey }) {
+  return async function authCli(req, res, next) {
+    // Path A: API key (validated against the DB)
+    const apiKey = req.headers['x-api-key'];
+    if (apiKey && await verifyApiKey(apiKey)) return next();
 
     // Path B: Bearer JWT
     const authHeader = req.headers.authorization;
@@ -74,13 +78,12 @@ function makeAuthCli({ apiKey, jwtVerify, getPublicKey }) {
 }
 
 function makeRes() {
-  const res = {
+  return {
     _status: null,
     _body: null,
     status(code) { this._status = code; return this; },
     json(body) { this._body = body; return this; },
   };
-  return res;
 }
 
 // ---------------------------------------------------------------------------
@@ -88,42 +91,53 @@ function makeRes() {
 // ---------------------------------------------------------------------------
 
 describe('authCli — Path A: API-Key', () => {
-  const mwOpts = {
-    apiKey: 'my-secret',
+  const baseOpts = {
+    verifyApiKey: async (k) => k === 'gts_valid',
     jwtVerify: async () => { throw new Error('should not be called'); },
     getPublicKey: () => null,
   };
 
-  it('calls next() with a correct X-API-Key', () => {
-    const mw = makeAuthCli(mwOpts);
-    const req = { headers: { 'x-api-key': 'my-secret' } };
+  it('calls next() with an API key that verifyApiKey accepts', async () => {
+    const mw = makeAuthCli(baseOpts);
+    const req = { headers: { 'x-api-key': 'gts_valid' } };
     const res = makeRes();
     let called = false;
-    mw(req, res, () => { called = true; });
+    await mw(req, res, () => { called = true; });
     assert.ok(called, 'next() should be called');
     assert.equal(res._status, null);
   });
 
-  it('does NOT short-circuit to next() with wrong API key (falls through to JWT check)', () => {
-    const mw = makeAuthCli({ ...mwOpts, getPublicKey: () => 'key' });
-    const req = { headers: { 'x-api-key': 'wrong' } };
+  it('does NOT short-circuit with a key verifyApiKey rejects (falls through to JWT check)', async () => {
+    const mw = makeAuthCli({ ...baseOpts, getPublicKey: () => 'key' });
+    const req = { headers: { 'x-api-key': 'gts_wrong' } };
     const res = makeRes();
     let called = false;
-    mw(req, res, () => { called = true; });
+    await mw(req, res, () => { called = true; });
     // No auth header → falls through to final 401
     assert.ok(!called);
     assert.equal(res._status, 401);
   });
 
-  it('returns 401 when API key is missing and no Bearer token', () => {
-    const mw = makeAuthCli(mwOpts);
+  it('returns 401 when API key is missing and no Bearer token', async () => {
+    const mw = makeAuthCli(baseOpts);
     const req = { headers: {} };
     const res = makeRes();
     let called = false;
-    mw(req, res, () => { called = true; });
+    await mw(req, res, () => { called = true; });
     assert.ok(!called);
     assert.equal(res._status, 401);
     assert.equal(res._body.error, 'Valid API key or GITCLIENT JWT required');
+  });
+
+  it('does not call verifyApiKey when the header is absent', async () => {
+    let verifyCalled = false;
+    const mw = makeAuthCli({
+      ...baseOpts,
+      verifyApiKey: async () => { verifyCalled = true; return true; },
+    });
+    const req = { headers: {} };
+    await mw(req, makeRes(), () => {});
+    assert.ok(!verifyCalled, 'must short-circuit before the DB lookup when header is absent');
   });
 });
 
@@ -133,16 +147,18 @@ describe('authCli — Path A: API-Key', () => {
 
 describe('authCli — Path B: GITCLIENT JWT', () => {
   const FAKE_PUB_KEY = 'fake-public-key';
+  // For Path B tests the API key never matches, so Path A always falls through.
+  const verifyApiKey = async () => false;
 
-  it('returns 503 when public key is not yet loaded', () => {
+  it('returns 503 when public key is not yet loaded', async () => {
     const mw = makeAuthCli({
-      apiKey: 'key',
+      verifyApiKey,
       jwtVerify: async () => ({ payload: {} }),
       getPublicKey: () => null,
     });
     const req = { headers: { authorization: 'Bearer some.jwt.token' } };
     const res = makeRes();
-    mw(req, res, () => {});
+    await mw(req, res, () => {});
     assert.equal(res._status, 503);
     assert.ok(res._body.error.includes('JWT public key'));
   });
@@ -150,7 +166,7 @@ describe('authCli — Path B: GITCLIENT JWT', () => {
   it('calls next() and attaches payload when JWT is valid with GITCLIENT role', async () => {
     const payload = { sub: 'user1', roles: ['GITCLIENT'] };
     const mw = makeAuthCli({
-      apiKey: 'key',
+      verifyApiKey,
       jwtVerify: async (_token, _key, _opts) => ({ payload }),
       getPublicKey: () => FAKE_PUB_KEY,
     });
@@ -161,7 +177,6 @@ describe('authCli — Path B: GITCLIENT JWT', () => {
 
     await new Promise(resolve => {
       mw(req, res, () => { nextCalled = true; nextReq = req; resolve(); });
-      // give the promise chain a tick to resolve if next isn't called synchronously
       setTimeout(resolve, 50);
     });
 
@@ -173,7 +188,7 @@ describe('authCli — Path B: GITCLIENT JWT', () => {
   it('returns 403 when JWT is valid but roles do not include GITCLIENT', async () => {
     const payload = { sub: 'user1', roles: ['ADMIN'] };
     const mw = makeAuthCli({
-      apiKey: 'key',
+      verifyApiKey,
       jwtVerify: async () => ({ payload }),
       getPublicKey: () => FAKE_PUB_KEY,
     });
@@ -192,7 +207,7 @@ describe('authCli — Path B: GITCLIENT JWT', () => {
   it('returns 403 when roles is not an array (missing field)', async () => {
     const payload = { sub: 'user1' }; // no roles field
     const mw = makeAuthCli({
-      apiKey: 'key',
+      verifyApiKey,
       jwtVerify: async () => ({ payload }),
       getPublicKey: () => FAKE_PUB_KEY,
     });
@@ -209,7 +224,7 @@ describe('authCli — Path B: GITCLIENT JWT', () => {
 
   it('returns 401 when JWT verification throws (invalid/expired token)', async () => {
     const mw = makeAuthCli({
-      apiKey: 'key',
+      verifyApiKey,
       jwtVerify: async () => { throw new Error('JWTExpired'); },
       getPublicKey: () => FAKE_PUB_KEY,
     });
@@ -225,37 +240,37 @@ describe('authCli — Path B: GITCLIENT JWT', () => {
     assert.equal(res._body.error, 'Invalid or expired JWT');
   });
 
-  it('returns 401 when Authorization header is present but not "Bearer "', () => {
+  it('returns 401 when Authorization header is present but not "Bearer "', async () => {
     const mw = makeAuthCli({
-      apiKey: 'key',
+      verifyApiKey,
       jwtVerify: async () => ({ payload: { roles: ['GITCLIENT'] } }),
       getPublicKey: () => FAKE_PUB_KEY,
     });
     const req = { headers: { authorization: 'Basic dXNlcjpwYXNz' } };
     const res = makeRes();
     let nextCalled = false;
-    mw(req, res, () => { nextCalled = true; });
+    await mw(req, res, () => { nextCalled = true; });
     assert.ok(!nextCalled);
     assert.equal(res._status, 401);
   });
 
-  it('API key takes priority — skips JWT check even if Bearer token present', () => {
+  it('API key takes priority — skips JWT check when verifyApiKey accepts the key', async () => {
     let jwtVerifyCalled = false;
     const mw = makeAuthCli({
-      apiKey: 'correct-key',
+      verifyApiKey: async (k) => k === 'gts_correct',
       jwtVerify: async () => { jwtVerifyCalled = true; return { payload: {} }; },
       getPublicKey: () => FAKE_PUB_KEY,
     });
     const req = {
       headers: {
-        'x-api-key': 'correct-key',
+        'x-api-key': 'gts_correct',
         authorization: 'Bearer some.other.jwt',
       },
     };
     const res = makeRes();
     let nextCalled = false;
-    mw(req, res, () => { nextCalled = true; });
+    await mw(req, res, () => { nextCalled = true; });
     assert.ok(nextCalled);
-    assert.ok(!jwtVerifyCalled, 'jwtVerify must not be called when API key matches');
+    assert.ok(!jwtVerifyCalled, 'jwtVerify must not be called when API key verifies');
   });
 });
