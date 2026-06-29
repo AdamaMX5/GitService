@@ -3,31 +3,68 @@ import axios from 'axios';
 import { readFileSync, existsSync } from 'fs';
 import { homedir } from 'os';
 import { join } from 'path';
+import { pathToFileURL } from 'url';
 import { execSync } from 'child_process';
 
 const RC_PATH = join(homedir(), '.gtsrc');
 const TOKENS_PATH = join(homedir(), '.gitclient', 'tokens.json');
 
-async function loadConfig() {
-  if (existsSync(RC_PATH)) {
-    const rc = JSON.parse(readFileSync(RC_PATH, 'utf8'));
-    if (rc.baseUrl && rc.apiKey) {
-      return { baseUrl: rc.baseUrl, headers: { 'X-API-Key': rc.apiKey } };
-    }
+const DEFAULT_BASE_URL = 'https://git.freischule.info';
+
+// Pure auth resolution — no I/O, fully unit-testable. Given the already-read
+// RC object, env, and whether the JWT tokens file exists, decide which auth to
+// use. Precedence:
+//   1. ~/.gtsrc with baseUrl + apiKey → X-API-Key (explicit standalone config wins)
+//   2. env GIT_SERVICE_API_KEY        → X-API-Key (baseUrl from GIT_SERVICE_URL or default)
+//   3. GitClient JWT tokens present   → Bearer (resolved by loadConfig via auth.js)
+// Returns { baseUrl, headers } for the API-key paths, { baseUrl, useJwt: true }
+// for the JWT path, or null when nothing is configured.
+export function resolveAuth({ rc, env, tokensExist }) {
+  if (rc && rc.baseUrl && rc.apiKey) {
+    return { baseUrl: rc.baseUrl, headers: { 'X-API-Key': rc.apiKey } };
   }
-  // Fall back to GitClient JWT tokens (when gts runs inside the GitClient environment)
-  const envUrl = process.env.GIT_SERVICE_URL;
-  if (existsSync(TOKENS_PATH) && envUrl) {
-    // Import getAccessToken lazily to avoid loading dotenv/auth deps in standalone mode
-    const { getAccessToken } = await import('./auth.js');
-    const accessToken = await getAccessToken();
-    return { baseUrl: envUrl, headers: { Authorization: `Bearer ${accessToken}` } };
+
+  const baseUrl = env.GIT_SERVICE_URL || DEFAULT_BASE_URL;
+
+  if (env.GIT_SERVICE_API_KEY) {
+    return { baseUrl, headers: { 'X-API-Key': env.GIT_SERVICE_API_KEY } };
   }
-  throw new Error(
-    `gts is not configured.\n` +
-    `Create ${RC_PATH} with:\n` +
-    `{\n  "baseUrl": "https://git.freischule.info",\n  "apiKey": "your-api-key"\n}`
-  );
+
+  if (tokensExist && env.GIT_SERVICE_URL) {
+    return { baseUrl, useJwt: true };
+  }
+
+  return null;
+}
+
+export async function loadConfig(deps = {}) {
+  const {
+    env = process.env,
+    fileExists = existsSync,
+    readFile = readFileSync,
+    loadAccessToken = async () => (await import('./auth.js')).getAccessToken(),
+  } = deps;
+
+  const rc = fileExists(RC_PATH) ? JSON.parse(readFile(RC_PATH, 'utf8')) : null;
+  const auth = resolveAuth({ rc, env, tokensExist: fileExists(TOKENS_PATH) });
+
+  if (!auth) {
+    throw new Error(
+      `gts is not configured.\n` +
+      `Provide one of:\n` +
+      `  - ${RC_PATH} with { "baseUrl": "${DEFAULT_BASE_URL}", "apiKey": "your-api-key" }\n` +
+      `  - env var GIT_SERVICE_API_KEY (optionally with GIT_SERVICE_URL)\n` +
+      `  - GitClient JWT tokens at ${TOKENS_PATH} (with GIT_SERVICE_URL set)`
+    );
+  }
+
+  if (auth.useJwt) {
+    // Import getAccessToken lazily to avoid loading dotenv/auth deps otherwise.
+    const accessToken = await loadAccessToken();
+    return { baseUrl: auth.baseUrl, headers: { Authorization: `Bearer ${accessToken}` } };
+  }
+
+  return auth;
 }
 
 function detectRepo() {
@@ -127,8 +164,12 @@ async function main() {
   }
 }
 
-main().catch(err => {
-  const msg = err.response?.data?.error || err.message;
-  console.error(`Error: ${msg}`);
-  process.exit(1);
-});
+// Only run the CLI when executed directly (gts ...), not when imported by tests.
+const isMain = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
+if (isMain) {
+  main().catch(err => {
+    const msg = err.response?.data?.error || err.message;
+    console.error(`Error: ${msg}`);
+    process.exit(1);
+  });
+}
