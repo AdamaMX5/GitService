@@ -6,7 +6,10 @@ import { storeIssue } from '../services/issueService.js';
 import { isValidRepo, isValidNumber, isValidBody, MAX_BODY_LENGTH } from '../utils/validation.js';
 
 const router = Router();
-router.use(authJwt);
+// Scoped to this router's own routes only — a path-less router.use() would run
+// for every request that falls through to this router at the '/' mount point,
+// even ones destined for a different router (e.g. /admin/*).
+router.use(['/repos', '/issue'], authJwt);
 
 router.get('/repos', (req, res) => {
   res.json(getRepos());

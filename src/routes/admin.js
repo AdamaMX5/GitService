@@ -4,7 +4,10 @@ import { generateApiKey, listApiKeys, revokeApiKey } from '../services/apiKeySer
 import { isValidName } from '../utils/validation.js';
 
 const router = Router();
-router.use(authAdmin);
+// Scoped to this router's own routes only — a path-less router.use() would run
+// for every request that falls through to this router at the '/' mount point,
+// even ones destined for a different router.
+router.use('/admin', authAdmin);
 
 // Create a named API key. The plaintext key is returned exactly once.
 router.post('/admin/api-keys', async (req, res) => {

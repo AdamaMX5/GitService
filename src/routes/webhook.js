@@ -4,7 +4,10 @@ import { getRepos, createComment, listOpenIssues } from '../clients/gitClient.js
 import { parseIssueNumberFromSubject, findIssueByNumber, storeIssue } from '../services/issueService.js';
 
 const router = Router();
-router.use(authApiKey);
+// Scoped to this router's own routes only — a path-less router.use() would run
+// for every request that falls through to this router at the '/' mount point,
+// even ones destined for a different router (e.g. /admin/*).
+router.use('/webhook', authApiKey);
 
 /**
  * Resolves which repo owns the given issue number.
