@@ -1,5 +1,11 @@
 # GitService
 
+## Architecture
+See @../../.claude/MSArchitecture/GitService.md für die eigene API dokumentation
+See @../../.claude/MSArchitecture/AuthService.md für AuthService details (JWT verification, GITCLIENT role).
+See @../../.claude/MSArchitecture/EmailService.md für EmailService details (Sende Nachfragen zum Issue-Ersteller).
+See @../../.claude/MSArchitecture/ExceptionService.md für ExceptionService details (Sende Fehlerfälle).
+
 ## Issue-Workflow
 
 Statt `gh` wird `gts` genutzt (GitService CLI):
