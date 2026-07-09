@@ -14,6 +14,23 @@ export function getPublicKey() {
   return publicKey;
 }
 
+// Map a jose jwtVerify rejection to a specific 401 message via its error `.code`.
+export function mapJwtError(err) {
+  switch (err?.code) {
+    case 'ERR_JWT_EXPIRED':
+      return 'Token expired';
+    case 'ERR_JWS_SIGNATURE_VERIFICATION_FAILED':
+      return 'Invalid token signature';
+    case 'ERR_JWT_INVALID':
+    case 'ERR_JWS_INVALID':
+      return 'Malformed token';
+    case 'ERR_JWT_CLAIM_VALIDATION_FAILED':
+      return 'Token validation failed';
+    default:
+      return 'Invalid or expired JWT';
+  }
+}
+
 export function authJwt(req, res, next) {
   const authHeader = req.headers.authorization;
   if (!authHeader?.startsWith('Bearer ')) {
@@ -28,5 +45,5 @@ export function authJwt(req, res, next) {
       req.user = payload;
       next();
     })
-    .catch(() => res.status(401).json({ error: 'Invalid or expired JWT' }));
+    .catch((err) => res.status(401).json({ error: mapJwtError(err) }));
 }

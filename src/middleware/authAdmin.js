@@ -1,5 +1,5 @@
 import { jwtVerify } from 'jose';
-import { getPublicKey } from './authJwt.js';
+import { getPublicKey, mapJwtError } from './authJwt.js';
 
 // Admin endpoints require a valid Bearer JWT (RS256) whose roles include 'ADMIN'.
 // Mirrors the JWT branch of authCli.js.
@@ -22,5 +22,5 @@ export function authAdmin(req, res, next) {
       }
       res.status(403).json({ error: 'ADMIN role required' });
     })
-    .catch(() => res.status(401).json({ error: 'Invalid or expired JWT' }));
+    .catch((err) => res.status(401).json({ error: mapJwtError(err) }));
 }

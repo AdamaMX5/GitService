@@ -1,5 +1,5 @@
 import { jwtVerify } from 'jose';
-import { getPublicKey } from './authJwt.js';
+import { getPublicKey, mapJwtError } from './authJwt.js';
 import { verifyApiKey } from '../services/apiKeyService.js';
 
 // CLI endpoints accept either a valid API key or a JWT with the GITCLIENT role.
@@ -24,7 +24,7 @@ export async function authCli(req, res, next) {
         }
         res.status(403).json({ error: 'GITCLIENT role required' });
       })
-      .catch(() => res.status(401).json({ error: 'Invalid or expired JWT' }));
+      .catch((err) => res.status(401).json({ error: mapJwtError(err) }));
     return;
   }
 
