@@ -3,24 +3,16 @@ import 'dotenv/config';
 import { config } from './config.js';
 import { fetchOpenIssues } from './poller.js';
 import { startClaude } from './runner.js';
+import { createIssueQueue } from './queue.js';
 
-// Track issues we've already started Claude for (in-memory; resets on restart)
-const startedIssues = new Set();
-
-function issueKey(issue) {
-  return `${issue.repo}:${issue.number}`;
-}
+// Discovered issues are drained one at a time so only a single Claude process
+// runs at once, in order of discovery (resets on restart).
+const queue = createIssueQueue(startClaude);
 
 async function poll() {
   try {
     const issues = await fetchOpenIssues();
-    for (const issue of issues) {
-      const key = issueKey(issue);
-      if (!startedIssues.has(key)) {
-        startedIssues.add(key);
-        startClaude(issue);
-      }
-    }
+    queue.enqueue(issues);
   } catch (err) {
     console.error('[poller] Error fetching issues:', err.message);
   }

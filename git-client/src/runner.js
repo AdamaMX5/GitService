@@ -5,7 +5,7 @@ export function startClaude(issue) {
   const cwd = config.repoPaths[issue.repo];
   if (!cwd) {
     console.warn(`[runner] No local path configured for repo "${issue.repo}" — skipping issue #${issue.number}`);
-    return;
+    return Promise.resolve();
   }
 
   // SECURITY: issue.title and issue.body are untrusted user content from the git provider.
@@ -35,21 +35,25 @@ export function startClaude(issue) {
 
   console.log(`[runner] Starting Claude for ${issue.repo}#${issue.number}: ${issue.title}`);
 
-  const child = spawn('claude', ['-p', prompt], {
-    cwd,
-    stdio: 'inherit',
-    shell: process.platform === 'win32',
-  });
+  return new Promise(resolve => {
+    const child = spawn('claude', ['-p', prompt], {
+      cwd,
+      stdio: 'inherit',
+      shell: process.platform === 'win32',
+    });
 
-  child.on('close', code => {
-    if (code !== 0) {
-      console.warn(`[runner] Claude exited with code ${code} for ${issue.repo}#${issue.number}`);
-    } else {
-      console.log(`[runner] Claude finished ${issue.repo}#${issue.number}`);
-    }
-  });
+    child.on('close', code => {
+      if (code !== 0) {
+        console.warn(`[runner] Claude exited with code ${code} for ${issue.repo}#${issue.number}`);
+      } else {
+        console.log(`[runner] Claude finished ${issue.repo}#${issue.number}`);
+      }
+      resolve();
+    });
 
-  child.on('error', err => {
-    console.error(`[runner] Failed to start Claude for ${issue.repo}#${issue.number}:`, err.message);
+    child.on('error', err => {
+      console.error(`[runner] Failed to start Claude for ${issue.repo}#${issue.number}:`, err.message);
+      resolve();
+    });
   });
 }
