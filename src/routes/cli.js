@@ -8,7 +8,8 @@ const router = Router();
 // Scoped to this router's own routes only — a path-less router.use() would run
 // for every request that falls through to this router at the '/' mount point,
 // even ones destined for a different router (e.g. /admin/*).
-router.use(['/issues', '/cli'], authCli);
+router.use('/issues', authCli);
+router.use('/cli', authCli);
 
 // Used by the GitClient poller to discover new open issues across all repos
 router.get('/issues', async (req, res) => {
