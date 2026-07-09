@@ -7,8 +7,22 @@ import { startClaude } from './runner.js';
 // Track issues we've already started Claude for (in-memory; resets on restart)
 const startedIssues = new Set();
 
+// Only one Claude process runs at a time; further issues wait in this queue.
+const pendingIssues = [];
+let isRunning = false;
+
 function issueKey(issue) {
   return `${issue.repo}:${issue.number}`;
+}
+
+function processNext() {
+  if (isRunning || pendingIssues.length === 0) return;
+  isRunning = true;
+  const issue = pendingIssues.shift();
+  startClaude(issue, () => {
+    isRunning = false;
+    processNext();
+  });
 }
 
 async function poll() {
@@ -18,9 +32,10 @@ async function poll() {
       const key = issueKey(issue);
       if (!startedIssues.has(key)) {
         startedIssues.add(key);
-        startClaude(issue);
+        pendingIssues.push(issue);
       }
     }
+    processNext();
   } catch (err) {
     console.error('[poller] Error fetching issues:', err.message);
   }

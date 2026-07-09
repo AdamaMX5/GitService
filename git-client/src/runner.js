@@ -1,10 +1,11 @@
 import { spawn } from 'child_process';
 import { config } from './config.js';
 
-export function startClaude(issue) {
+export function startClaude(issue, onDone) {
   const cwd = config.repoPaths[issue.repo];
   if (!cwd) {
     console.warn(`[runner] No local path configured for repo "${issue.repo}" — skipping issue #${issue.number}`);
+    onDone?.();
     return;
   }
 
@@ -47,9 +48,11 @@ export function startClaude(issue) {
     } else {
       console.log(`[runner] Claude finished ${issue.repo}#${issue.number}`);
     }
+    onDone?.();
   });
 
   child.on('error', err => {
     console.error(`[runner] Failed to start Claude for ${issue.repo}#${issue.number}:`, err.message);
+    onDone?.();
   });
 }
