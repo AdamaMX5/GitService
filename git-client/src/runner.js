@@ -36,11 +36,17 @@ export function startClaude(issue) {
   console.log(`[runner] Starting Claude for ${issue.repo}#${issue.number}: ${issue.title}`);
 
   return new Promise(resolve => {
-    const child = spawn('claude', ['-p', prompt], {
+    // Prompt is piped via stdin rather than passed as a '-p' argument: on Windows,
+    // spawn's shell:true joins argv into a single unquoted command line, so a
+    // multi-word/multi-line argument gets split on whitespace and truncated at the
+    // first newline before claude ever sees it.
+    const child = spawn('claude', ['-p'], {
       cwd,
-      stdio: 'inherit',
+      stdio: ['pipe', 'inherit', 'inherit'],
       shell: process.platform === 'win32',
     });
+
+    child.stdin.end(prompt);
 
     child.on('close', code => {
       if (code !== 0) {
