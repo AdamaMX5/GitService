@@ -16,7 +16,7 @@ export async function sendEmail({ to, subject, body, replyTo }) {
       isHtml: false,
       type: 'git-service-notification',
     },
-    { headers: { 'X-API-Key': config.email.apiKey } }
+    { headers: { 'X-API-Key': config.email.apiKey }, timeout: 5000 }
   );
   return res.data;
 }

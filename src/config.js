@@ -32,5 +32,6 @@ export const config = {
     apiKey: process.env.EMAIL_SERVICE_API_KEY || '',
     from: process.env.EMAIL_FROM || 'gitservice@flussmark.de',
     replyTo: process.env.EMAIL_REPLY_TO || 'gitservice@flussmark.de',
+    adminEmail: process.env.ADMIN_EMAIL || '',
   },
 };

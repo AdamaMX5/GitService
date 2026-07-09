@@ -190,6 +190,11 @@ Ermöglicht dem User, eine Antwort auf eine Rückfrage von Claude Code direkt au
 
 Diese Endpoints werden ausschließlich vom `gts` CLI genutzt, das Claude Code auf dem Entwickler-PC ausführt. Der API-Key wird lokal in `~/.gtsrc` gespeichert. Das Repo wird aus dem Git-Remote des aktuellen Verzeichnisses ausgelesen.
 
+#### `GET /issues`
+Wird vom GitClient-Poller genutzt, um offene Issues über alle Repos zu entdecken und für jedes neue Issue automatisch Claude Code zu starten.
+
+**Content-Safety-Check:** Bevor Issues zurückgegeben werden, wird Titel + Body jedes Issues heuristisch auf Prompt-Injection- bzw. bösartigen Inhalt gescannt (siehe `src/services/contentSafety.js`). Als verdächtig markierte Issues werden **aus der Response ausgeschlossen** — sie erreichen den Poller (und damit den autonomen Coding-Agenten) nie. Stattdessen wird der Admin per Email (`ADMIN_EMAIL`) einmalig benachrichtigt, damit das Issue manuell geprüft werden kann. Normale Nutzer können weiterhin uneingeschränkt Issues über `POST /issue` anlegen — nur `GET /issues` filtert.
+
 #### `GET /cli/issue/:number`
 Liest einen Issue. Claude Code nutzt dies um den vollen Issue-Inhalt abzurufen.
 

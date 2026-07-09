@@ -1,7 +1,8 @@
 import { Router } from 'express';
 import { authCli } from '../middleware/authCli.js';
 import { getRepos, getIssue, closeIssue, listOpenIssues } from '../clients/gitClient.js';
-import { postCommentAndMaybeEmail } from '../services/issueService.js';
+import { postCommentAndMaybeEmail, flagIssueAndNotifyAdmin } from '../services/issueService.js';
+import { scanIssueContent } from '../services/contentSafety.js';
 import { isValidRepo, isValidNumber, isValidBody, MAX_BODY_LENGTH } from '../utils/validation.js';
 
 const router = Router();
@@ -11,12 +12,36 @@ const router = Router();
 router.use('/issues', authCli);
 router.use('/cli', authCli);
 
-// Used by the GitClient poller to discover new open issues across all repos
+// Used by the GitClient poller to discover new open issues across all repos.
+// Issues are scanned for prompt-injection / malicious content before being handed to
+// the poller — flagged issues are excluded here and the admin is notified instead,
+// since the poller feeds this content directly into an autonomous coding agent.
 router.get('/issues', async (req, res) => {
   try {
     const repos = await getRepos();
     const results = await Promise.all(repos.map(r => listOpenIssues(r.name)));
-    res.json(results.flat());
+    const issues = results.flat();
+
+    const safeIssues = [];
+    const flagged = [];
+    for (const issue of issues) {
+      const scan = scanIssueContent(issue.title, issue.body);
+      if (scan.flagged) {
+        flagged.push({ issue, reasons: scan.reasons });
+      } else {
+        safeIssues.push(issue);
+      }
+    }
+
+    res.json(safeIssues);
+
+    // Fire-and-forget: admin notification emails must not block/delay this response —
+    // a slow/down EmailService, or an attacker flooding a repo with flagged issues,
+    // would otherwise starve the GitClient poller of every repo's issues, not just
+    // the flagged ones. Rejections are caught here so they don't surface as unhandled.
+    Promise.allSettled(flagged.map(({ issue, reasons }) => flagIssueAndNotifyAdmin(issue, reasons))).catch(err => {
+      console.error('Unexpected error while notifying admin of flagged issues:', err.message);
+    });
   } catch (err) {
     console.error('GET /issues error:', err.message);
     res.status(503).json({ error: 'Git provider unavailable' });
