@@ -6,9 +6,12 @@ const { version } = JSON.parse(readFileSync(new URL('../../package.json', import
 
 const router = Router();
 
-router.get('/', (req, res) => {
+const helloHandler = (req, res) => {
   res.json({ message: "I'm the GitService.", version });
-});
+};
+
+router.get('/', helloHandler);
+router.get('/hello', helloHandler);
 
 router.get('/health', (req, res) => {
   res.json({
