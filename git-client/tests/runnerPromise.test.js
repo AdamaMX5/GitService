@@ -50,6 +50,38 @@ describe('startClaude — no configured repo path', () => {
   });
 });
 
+describe('launchWindows — window auto-close and progress visibility (structural)', () => {
+  const src = readFileSync(SOURCE_PATH, 'utf8');
+
+  it('launches the batch file via an explicit `cmd.exe /c`, not via start\'s file association', () => {
+    // Letting `start` resolve .bat through ShellExecute/ftype is not guaranteed
+    // to close the window when the script finishes (machine-dependent config),
+    // which stalls `start /WAIT` and therefore the whole issue queue. Routing
+    // through an explicit `cmd.exe /c batFile` always terminates on its own.
+    assert.ok(
+      /\['\/c', 'start', '', '\/MAX', '\/WAIT', 'cmd\.exe', '\/c', batFile\]/.test(src),
+      'start must hand the batch file to an explicit cmd.exe /c, not rely on file association',
+    );
+  });
+
+  it('streams progress via verboseClaudeRunner.js instead of only the final message', () => {
+    // Plain `claude -p --verbose` was verified against a real invocation to
+    // print nothing until the run finishes (--verbose only affects
+    // --output-format stream-json in print mode). The launcher must delegate
+    // to the formatter script rather than calling `claude -p --verbose`
+    // directly.
+    assert.ok(
+      /node "\$\{VERBOSE_RUNNER\}" "\$\{promptFile\}"/.test(src),
+      'Windows launcher must run verboseClaudeRunner.js, not claude -p --verbose directly',
+    );
+    assert.ok(!/claude -p --verbose </.test(src), 'must not fall back to the non-streaming --verbose text mode');
+  });
+
+  it('echoes the prompt file via `type`, never interpolating its content into the batch script', () => {
+    assert.ok(/type "\$\{promptFile\}"/.test(src), 'prompt must be shown via type (safe file read), not embedded inline');
+  });
+});
+
 describe('startClaude — spawn branch Promise contract (structural)', () => {
   const src = readFileSync(SOURCE_PATH, 'utf8');
 

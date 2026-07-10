@@ -1,8 +1,14 @@
 import { spawn, spawnSync } from 'child_process';
 import { mkdtempSync, writeFileSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
-import { join } from 'path';
+import { dirname, join } from 'path';
+import { fileURLToPath } from 'url';
 import { config } from './config.js';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+// Absolute, fixed path — never derived from issue/repo data — to the
+// stream-json → human-readable formatter used by launchWindows below.
+const VERBOSE_RUNNER = join(__dirname, 'verboseClaudeRunner.js');
 
 // Checks whether a command is resolvable on PATH. Always call with a fixed,
 // hardcoded command name — never anything derived from issue/repo data.
@@ -38,13 +44,31 @@ export function buildPrompt(issue) {
 
 // New, maximized CMD window (start /MAX). Auto-closes on success; on a
 // non-zero exit it stays open with the code so the developer can read it.
+//
+// The prompt is echoed via `type` (safe: dumps file bytes verbatim, never
+// parsed as batch syntax) so the window shows what was "submitted" before
+// Claude's own output appears. Plain `claude -p --verbose` was tried and
+// verified to print NOTHING until the whole run finishes — in print mode,
+// --verbose only affects the "stream-json" output format, not the default
+// text format. So progress is streamed via `--output-format stream-json`
+// piped through verboseClaudeRunner.js, which turns the JSON events back
+// into short human-readable lines (tool calls, assistant text) instead of a
+// blank screen followed by one final message.
 function launchWindows(cwd, promptFile, tmpDir) {
   const batFile = join(tmpDir, 'run.bat');
   writeFileSync(
     batFile,
     [
       '@echo off',
-      `claude -p < "${promptFile}"`,
+      'echo ==================================================',
+      'echo  GitService - Claude Agent Team',
+      'echo ==================================================',
+      'echo.',
+      `type "${promptFile}"`,
+      'echo.',
+      'echo ==================================================',
+      'echo.',
+      `node "${VERBOSE_RUNNER}" "${promptFile}"`,
       'if errorlevel 1 (',
       '  echo.',
       '  echo Claude exited with an error - press any key to close this window.',
@@ -56,11 +80,18 @@ function launchWindows(cwd, promptFile, tmpDir) {
   // shell:false — cmd.exe is the real binary and every token is controlled.
   // The empty-string args element is the `start` title placeholder (Node
   // renders it as "" for us); do NOT pass the literal string '""'.
-  const child = spawn('cmd.exe', ['/c', 'start', '', '/MAX', '/WAIT', batFile], {
-    cwd,
-    stdio: 'ignore',
-    shell: false,
-  });
+  //
+  // batFile is run via an explicit `cmd.exe /c`, not left to `start`'s file
+  // association (ShellExecute) for .bat files. Depending on the machine's
+  // `ftype batfile` config, ShellExecute-launched batch windows can stay
+  // open after the script finishes instead of closing — /c guarantees the
+  // spawned cmd.exe always terminates itself when the script ends, which is
+  // what lets `start /WAIT` (and therefore the queue) actually unblock.
+  const child = spawn(
+    'cmd.exe',
+    ['/c', 'start', '', '/MAX', '/WAIT', 'cmd.exe', '/c', batFile],
+    { cwd, stdio: 'ignore', shell: false },
+  );
   return { child, tmpDir };
 }
 
