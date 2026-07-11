@@ -1,9 +1,10 @@
 import { spawn, spawnSync } from 'child_process';
-import { mkdtempSync, writeFileSync, rmSync } from 'fs';
+import { mkdtempSync, writeFileSync, rmSync, existsSync, readFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
 import { config } from './config.js';
+import { SESSION_LIMIT_EXIT_CODE } from './exitCodes.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 // Absolute, fixed path — never derived from issue/repo data — to the
@@ -69,7 +70,14 @@ function launchWindows(cwd, promptFile, tmpDir) {
       'echo ==================================================',
       'echo.',
       `node "${VERBOSE_RUNNER}" "${promptFile}"`,
-      'if errorlevel 1 (',
+      // Capture the exit code immediately: `if errorlevel N` matches >= N in
+      // batch, which would treat the session-limit code as a generic error.
+      // An exact %EC% comparison is required to distinguish the three cases.
+      'set EC=%ERRORLEVEL%',
+      `if "%EC%"=="${SESSION_LIMIT_EXIT_CODE}" (`,
+      '  echo.',
+      '  echo Claude hit its session limit - GitClient will retry automatically.',
+      `) else if not "%EC%"=="0" (`,
       '  echo.',
       '  echo Claude exited with an error - press any key to close this window.',
       '  pause >nul',
@@ -123,7 +131,10 @@ function launchLinux(cwd, promptFile, tmpDir, prompt) {
       '#!/bin/sh',
       `claude -p < "${promptFile}"`,
       'ec=$?',
-      'if [ $ec -ne 0 ]; then',
+      `if [ $ec -eq ${SESSION_LIMIT_EXIT_CODE} ]; then`,
+      '  echo',
+      '  echo "Claude hit its session limit - GitClient will retry automatically."',
+      'elif [ $ec -ne 0 ]; then',
       '  echo',
       '  echo "Claude exited with an error (code $ec). Press Enter to close this window."',
       '  read _',
@@ -173,42 +184,94 @@ function launchClaudeProcess(cwd, prompt) {
   return { child: launchInherited(cwd, prompt), tmpDir };
 }
 
+// Best-effort force-kill of the launched process tree. On win32 the visible
+// window is a detached `start` child, so the whole tree must be taken down by
+// PID (taskkill /T /F); child.kill() alone would only reap the immediate spawn.
+function killProcessTree(child) {
+  try {
+    if (process.platform === 'win32') {
+      // /T kills the whole tree, /F forces it. Ignore failures — the process
+      // may already have exited, which is fine.
+      spawnSync('taskkill', ['/PID', String(child.pid), '/T', '/F'], { stdio: 'ignore' });
+    } else {
+      // On the tmux/xterm path this may not reap the terminal-hosted claude
+      // fully, but it is the best portable signal we can send.
+      child.kill('SIGKILL');
+    }
+  } catch {
+    // best-effort — nothing to do if the process is already gone
+  }
+}
+
+// Returns { promise, kill }. `promise` never rejects: it resolves with
+// { status, code } where status is 'success' | 'sessionLimit' | 'error'.
+// `kill` force-terminates the launched process tree (used by the queue to
+// reclaim an issue whose window never reported back). The child is spawned
+// synchronously before the Promise is constructed so `kill` always has a
+// valid handle to act on.
 export function startClaude(issue) {
   const cwd = config.repoPaths[issue.repo];
   if (!cwd) {
     console.warn(`[runner] No local path configured for repo "${issue.repo}" — skipping issue #${issue.number}`);
-    return Promise.resolve();
+    return { promise: Promise.resolve({ status: 'error', code: null, resetAt: null }), kill: () => {} };
   }
 
   const prompt = buildPrompt(issue);
 
   console.log(`[runner] Starting Claude for ${issue.repo}#${issue.number}: ${issue.title}`);
 
-  return new Promise(resolve => {
-    const { child, tmpDir } = launchClaudeProcess(cwd, prompt);
+  const { child, tmpDir } = launchClaudeProcess(cwd, prompt);
 
-    const cleanup = () => {
-      try {
-        rmSync(tmpDir, { recursive: true, force: true });
-      } catch {
-        // best-effort — nothing to do if the temp dir is already gone
-      }
-    };
+  const cleanup = () => {
+    try {
+      rmSync(tmpDir, { recursive: true, force: true });
+    } catch {
+      // best-effort — nothing to do if the temp dir is already gone
+    }
+  };
 
+  const promise = new Promise(resolve => {
     child.on('close', code => {
-      if (code !== 0) {
-        console.warn(`[runner] Claude exited with code ${code} for ${issue.repo}#${issue.number}`);
-      } else {
+      if (code === 0) {
         console.log(`[runner] Claude finished ${issue.repo}#${issue.number}`);
+      } else if (code === SESSION_LIMIT_EXIT_CODE) {
+        console.log(`[runner] Claude hit its session limit for ${issue.repo}#${issue.number} — will retry later`);
+      } else {
+        console.warn(`[runner] Claude exited with code ${code} for ${issue.repo}#${issue.number}`);
       }
+
+      // On a session limit, verboseClaudeRunner may have written the parsed reset
+      // time here. Read it BEFORE cleanup() removes tmpDir. Only trust a valid,
+      // still-future timestamp; anything else falls back to the queue's delay.
+      let resetAt = null;
+      if (code === SESSION_LIMIT_EXIT_CODE) {
+        try {
+          const resetFile = join(tmpDir, 'session-limit-reset-at.json');
+          if (existsSync(resetFile)) {
+            const parsed = new Date(JSON.parse(readFileSync(resetFile, 'utf8')).resetAtIso);
+            if (!Number.isNaN(parsed.getTime()) && parsed.getTime() > Date.now()) {
+              resetAt = parsed;
+            }
+          }
+        } catch {
+          resetAt = null;
+        }
+      }
+
       cleanup();
-      resolve();
+      resolve({
+        status: code === 0 ? 'success' : code === SESSION_LIMIT_EXIT_CODE ? 'sessionLimit' : 'error',
+        code,
+        resetAt,
+      });
     });
 
     child.on('error', err => {
       console.error(`[runner] Failed to start Claude for ${issue.repo}#${issue.number}:`, err.message);
       cleanup();
-      resolve();
+      resolve({ status: 'error', code: null, resetAt: null });
     });
   });
+
+  return { promise, kill: () => killProcessTree(child) };
 }

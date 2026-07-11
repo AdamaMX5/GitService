@@ -5,8 +5,10 @@ import { fetchOpenIssues } from './poller.js';
 import { startClaude } from './runner.js';
 import { createIssueQueue } from './queue.js';
 
-// Discovered issues are drained one at a time so only a single Claude process
-// runs at once, in order of discovery (resets on restart).
+// Discovered issues are drained in order of discovery (dedup resets on
+// restart). Normally serial — a single Claude process at a time — but the queue
+// escalates a stuck run into a parallel start (after 2h) or a force-kill and
+// requeue (after 24h) so one hung issue can't block everything. See queue.js.
 const queue = createIssueQueue(startClaude);
 
 async function poll() {
